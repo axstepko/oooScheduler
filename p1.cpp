@@ -93,7 +93,7 @@ typedef struct ROB_t
  */
 typedef struct iqEntry_t
 {
-    iRecord_t instr; //!< Contains op1, op2, op3, use renamed versions
+    iRecord_t *instr; //!< Contains op1, op2, op3, use renamed versions
     bool src1_ready; //!< op2_r ready
     bool src2_ready; //!< op3_r ready
 
@@ -110,9 +110,9 @@ deque<ROB_t> reorderBuff;     //!< System re-order buffer (ROB)
 deque<iqEntry_t> issueQueue;  //!< System issue queue. Linked with ROB
 unsigned long long iqAge = 0; //!< IQ age tracker
 
-deque<iRecord_t> wBQueue; //!< Queue between IS and Writeback to handle pulls from the IQ in IS
+deque<iRecord_t *> wBQueue; //!< Queue between IS and Writeback to handle pulls from the IQ in IS
 
-deque<iRecord_t> commitQueue; //!< Queue between WB and C to prompt commit to look at stuff.
+deque<iRecord_t *> commitQueue; //!< Queue between WB and C to prompt commit to look at stuff.
 
 /**
  * @brief Reads instructions from a file and places into instruction memory.
@@ -197,7 +197,7 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
             if (!reorderBuff.empty() && reorderBuff.front().ready == true)
             {
                 // Pull from front of commit queue
-                pipe[i].C = &commitQueue.front();
+                pipe[i].C = commitQueue.front();
                 pipe[i].C->C = cycle;
 #ifdef COMMIT_DEBUG
                 printf("Committed on cycle %d\n", pipe[i].C->C);
@@ -229,7 +229,7 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
  */
 void writeback(frontEndPipe_t *pipe, unsigned int cycle)
 {
-    iRecord_t tempRec;
+    iRecord_t *tempRec;
 #ifdef WRITEBACK_DEBUG
     printf("-- writeback --\n");
 #endif
@@ -239,10 +239,10 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
         {
             // Pull element from front of wbQueue
             tempRec = wBQueue.front();
-            tempRec.W = cycle;   // Mark completion time
+            tempRec->W = cycle;   // Mark completion time
             wBQueue.pop_front(); // Remove entry from deque
 #ifdef WRITEBACK_DEBUG
-            printf("Popped %c dest %d from wbQueue\n", tempRec.iType, tempRec.op1_r);
+            printf("Popped %c dest %d from wbQueue\n", tempRec->iType, tempRec->op1_r);
 #endif
 
             // Send instruction to commit:
@@ -253,7 +253,7 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
             {
                 for (int j = 0; j < reorderBuff.size(); j++)
                 {
-                    if (reorderBuff.at(j).instr.op1_r == tempRec.op1_r)
+                    if (reorderBuff.at(j).instr.op1_r == tempRec->op1_r)
                     {
                         // Mark instruction as complete
                         reorderBuff.at(j).ready = true;
@@ -294,10 +294,10 @@ void issue(frontEndPipe_t *pipe, unsigned int cycle)
                 {
 #ifdef ISSUE_DEBUG
                     printf("PULL %d: Send IQ entry %d to writeback\n", IQpull, j);
-                    printf("Send itype %c dest %d to WB in IW %d\n", issueQueue[j].instr.iType, issueQueue[j].instr.op1_r, i);
+                    printf("Send itype %c dest %d to WB in IW %d\n", issueQueue[j].instr->iType, issueQueue[j].instr->op1_r, i);
                     printf("IS cycle %d\n", cycle);
 #endif
-                    issueQueue[j].instr.IS = cycle; // Mark cycle of completion
+                    issueQueue[j].instr->IS = cycle; // Mark cycle of completion
                     wBQueue.push_back(issueQueue[j].instr);
 
                     issueQueue.erase(issueQueue.begin() + j);
@@ -324,25 +324,18 @@ void issue(frontEndPipe_t *pipe, unsigned int cycle)
  */
 void dispatch(frontEndPipe_t *pipe, unsigned int cycle)
 {
-    iqEntry_t slotEntry; //!< Slot to place into the issue queue
-    ROB_t ROBentry;      //!< Slot to place into the FIFO ROB
+    iqEntry_t *slotEntry = (iqEntry_t *)malloc(sizeof(iqEntry_t));    //!< Slot to place into the issue queue
+    ROB_t ROBentry;                 //!< Slot to place into the FIFO ROB
 
     for (int i = 0; i < ISSUE_WIDTH; i++)
     {
         // Pipeline has already been advanced. data in Di is valid to use to generate IQ entry.
 
-        // Clean out old IQ and ROB entries:
-        slotEntry.age = 0;
-        slotEntry.src1_ready = false;
-        slotEntry.src2_ready = false;
-
-        ROBentry.committed = false;
-        ROBentry.ready = false;
-
         if (pipe[i].Di != NOP)
         {
             pipe[i].Di->Di = cycle;
-            slotEntry.instr = *(pipe[i].Di);
+            slotEntry->instr = pipe[i].Di; // Point memory address of IQ entry to the in-order pipeline
+
             // Check instruction type to see if src1, src2 both need to be marked as ready or otherwise:
 #ifdef DISPATCH_DEBUG
             printf("dispatch sees %c\n", pipe[i].Di->iType);
@@ -351,23 +344,23 @@ void dispatch(frontEndPipe_t *pipe, unsigned int cycle)
             switch (pipe[i].Di->iType)
             {
             case 'R': // op1 produces, all others from table
-                slotEntry.src1_ready = readyTable[pipe[i].Di->op2_r];
-                slotEntry.src2_ready = readyTable[pipe[i].Di->op3_r];
+                slotEntry->src1_ready = readyTable[pipe[i].Di->op2_r];
+                slotEntry->src2_ready = readyTable[pipe[i].Di->op3_r];
                 readyTable[pipe[i].Di->op1_r] = false;
                 break;
             case 'I': // op1 produces, op2 is dynamic, op3 is immediate.
-                slotEntry.src1_ready = readyTable[pipe[i].Di->op2_r];
-                slotEntry.src2_ready = true;           // op3 is immediate and therefore always ready.
+                slotEntry->src1_ready = readyTable[pipe[i].Di->op2_r];
+                slotEntry->src2_ready = true;           // op3 is immediate and therefore always ready.
                 readyTable[pipe[i].Di->op1_r] = false; // op1 producer marked false
                 break;
-            case 'L':                        // op1 produces, op2 is immediate, op3 is dynamic
-                slotEntry.src1_ready = true; // op2 is immediate and therefore always ready.
-                slotEntry.src2_ready = readyTable[pipe[i].Di->op3_r];
+            case 'L':                         // op1 produces, op2 is immediate, op3 is dynamic
+                slotEntry->src1_ready = true; // op2 is immediate and therefore always ready.
+                slotEntry->src2_ready = readyTable[pipe[i].Di->op3_r];
                 readyTable[pipe[i].Di->op1_r] = false; // op1 producer marked false
                 break;
             case 'S': // Consumer only. All values ready to issue.
-                slotEntry.src1_ready = true;
-                slotEntry.src2_ready = true;
+                slotEntry->src1_ready = true;
+                slotEntry->src2_ready = true;
                 break;
             default:
 #ifdef DISPATCH_DEBUG
@@ -381,16 +374,16 @@ void dispatch(frontEndPipe_t *pipe, unsigned int cycle)
             {
                 readyTable[pipe[i].Di->op1_r] = 0;
             }
-            slotEntry.age = iqAge;
+            slotEntry->age = iqAge;
             iqAge++;
 
             // Generate ROB entry:
-            ROBentry.instr = slotEntry.instr;
+            ROBentry.instr = *(slotEntry->instr);
             ROBentry.committed = false;
             ROBentry.ready = false;
 
-            // Send to the IQ and ROB
-            issueQueue.push_back(slotEntry);
+            // Send to the IQ and ROB:
+            issueQueue.push_back(*(slotEntry));
             reorderBuff.push_back(ROBentry);
 #ifdef DISPATCH_DEBUG
             printf("dispatch pushed to ROB, size now %lu. IQ size now %lu\n", reorderBuff.size(), issueQueue.size());
@@ -715,16 +708,16 @@ int main()
     // Housekeping for the instructions:
     free(thePipelineState);
 
-    for (int i = 0; i < ISSUE_WIDTH; i++)
-    {
-        free(thePipelineState[i].F);
-        free(thePipelineState[i].Dc);
-        free(thePipelineState[i].R);
-        free(thePipelineState[i].Di);
-        free(thePipelineState[i].IS);
-        free(thePipelineState[i].W);
-        free(thePipelineState[i].C);
-    }
+    // for (int i = 0; i < ISSUE_WIDTH; i++)
+    // {
+    //     free(thePipelineState[i].F);
+    //     free(thePipelineState[i].Dc);
+    //     free(thePipelineState[i].R);
+    //     free(thePipelineState[i].Di);
+    //     free(thePipelineState[i].IS);
+    //     free(thePipelineState[i].W);
+    //     free(thePipelineState[i].C);
+    // }
 
     return 0;
 }
