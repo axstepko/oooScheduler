@@ -20,14 +20,14 @@ using namespace std;
 #define NOP NULL
 
 // Enables verbose program output in specific stages:
-#define DEBUG_MODE //!< Main function, helper functions, etc.
-#define FETCH_DEBUG
+// #define DEBUG_MODE //!< Main function, helper functions, etc.
+// #define FETCH_DEBUG
 // #define DECODE_DEBUG
-#define RENAME_DEBUG
-#define DISPATCH_DEBUG
-#define ISSUE_DEBUG
-#define WRITEBACK_DEBUG
-#define COMMIT_DEBUG
+// #define RENAME_DEBUG
+// #define DISPATCH_DEBUG
+// #define ISSUE_DEBUG
+// #define WRITEBACK_DEBUG
+// #define COMMIT_DEBUG
 
 unsigned int ISSUE_WIDTH;           //!< User-configured parameter for machine width
 unsigned int PREG_COUNT;            //!< User-configured parameter for the number of physical registers.
@@ -83,8 +83,8 @@ typedef struct frontEndPipe_t
 typedef struct ROB_t
 {
     iRecord_t *instr; //!< Full instruction record thus far
-    bool ready;      //!< Flag for whether or not the instruction was completed. Marked in writeback
-    bool committed;  //!< Flag for whether or not the instruction was committed
+    bool ready;       //!< Flag for whether or not the instruction was completed. Marked in writeback
+    bool committed;   //!< Flag for whether or not the instruction was committed
 } ROB_t;
 
 /**
@@ -171,6 +171,12 @@ void printRecords(unsigned int numInstr)
 #ifdef DEBUG_MODE
         printf("%d: %d, %d, %d, %d, %d, %d, %d\n", i, instructions[i].F, instructions[i].Dc, instructions[i].R, instructions[i].Di, instructions[i].IS, instructions[i].W, instructions[i].C);
 #endif
+        if (ISSUE_WIDTH < 1 || PREG_COUNT < AREG_COUNT) // If resources are not available, do not make output file
+            break;
+        else
+        {
+            fprintf(outputFile, "%d, %d, %d, %d, %d, %d, %d\n", instructions[i].F, instructions[i].Dc, instructions[i].R, instructions[i].Di, instructions[i].IS, instructions[i].W, instructions[i].C);
+        }
     }
 
     fclose(outputFile);
@@ -213,10 +219,10 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
             // Pull from front of commit queue
             pipe[commitPull].C = reorderBuff.front()->instr;
             pipe[commitPull].C->C = cycle;
-// #ifdef COMMIT_DEBUG
-//             printf("Committed on %d cycle %d\n", commitQueue.front()->op1_r, pipe[commitPull].C->C);
-// #endif
-//             commitQueue.pop_front();
+            // #ifdef COMMIT_DEBUG
+            //             printf("Committed on %d cycle %d\n", commitQueue.front()->op1_r, pipe[commitPull].C->C);
+            // #endif
+            //             commitQueue.pop_front();
 
 #ifdef COMMIT_DEBUG
             printf("poping %d from ROB\n", reorderBuff.front()->instr->op1_r);
@@ -329,55 +335,12 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
     }
 }
 
-// void issue(frontEndPipe_t *pipe, unsigned int cycle)
-// {
-// #ifdef ISSUE_DEBUG
-//     printf("-- issue -- \n");
-// #endif
-//     unsigned int IQpull = 0; //! Number of pulls from the IQ. IQpull < ISSUE_WIDTH.
-
-//     for (int i = 0; i < ISSUE_WIDTH; i++)
-//     {
-//         if (issueQueue.empty() == false)
-//         {
-//             for (const iqEntry_t &iqEntry : issueQueue)
-//             {
-//                 cout << "-> op1_r for an element in iq " << iqEntry.instr->op1_r << endl;
-//             }
-
-//             int j = issueQueue.size() - 1; //!< Iterator to start at last element
-
-//             while (j >= 0 && IQpull < ISSUE_WIDTH)
-//             {
-// #ifdef ISSUE_DEBUG
-//                 printf("IS check IQ[%d]:\n", j);
-// #endif
-//                 if (issueQueue[j].src1_ready && issueQueue[j].src2_ready)
-//                 {
-// #ifdef ISSUE_DEBUG
-//                     printf("PULL %d: Send IQ entry %d to writeback\n", IQpull, j);
-//                     printf("Send itype %c dest %d to WB in IW %d\n", issueQueue[j].instr->iType, issueQueue[j].instr->op1_r, i);
-//                     printf("IS cycle %d\n", cycle);
-// #endif
-//                     issueQueue[j].instr->IS = cycle; // Mark cycle of completion
-//                     wBQueue.push_back(issueQueue[j].instr);
-
-//                     issueQueue.erase(issueQueue.begin() + j);
-//                     IQpull++;
-//                     break;
-//                 }
-//                 j--;
-//             }
-//         }
-// #ifdef ISSUE_DEBUG
-//         else
-//         {
-//             printf("IQ is empty.\n");
-//         }
-// #endif
-//     }
-// }
-
+/**
+ * @brief Receives instructions from the IQ. Examines them and submits for execution. Wakes up dependent older instructions in the IQ
+ *
+ * @param pipe Pipeline state of the machine
+ * @param cycle Current cycle of the machine
+ */
 void issue(frontEndPipe_t *pipe, unsigned int cycle)
 {
 #ifdef ISSUE_DEBUG
@@ -850,10 +813,9 @@ int main()
 
         // completedInsts++;
 
-        ++cycle;
-
         if (cycle == 15)
             break;
+        ++cycle;
     }
 
     printRecords(ICOUNT);
