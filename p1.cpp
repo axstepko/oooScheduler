@@ -220,25 +220,31 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
 #endif
                 commitQueue.pop_front();
 
-                // Clean out the ROB entry, as it has been committed
-                reorderBuff.front().committed = true;
 #ifdef COMMIT_DEBUG
                 printf("poping %d from ROB\n", reorderBuff.front().instr.op1_r);
                 printf("commit queue depth: %lu\n", commitQueue.size());
 #endif
-                for (const ROB_t &robEntry : reorderBuff)
+
+                freeList.push_back(reorderBuff.front().instr.op1_r); // Reclaim register on the free list
+                //readyTable[reorderBuff.front().instr.op1_r] = false;
+
+                reorderBuff.pop_front(); // May clear it out, need to be careful here
+                if (!reorderBuff.empty())
                 {
-                    if (robEntry.ready)
+                    // reorderBuff.front().instr.op1_r = 111;
+                    printf("popped front. ROB depth %lu\n", reorderBuff.size());
+                    printf("new ROB FRONT: %d\n", reorderBuff.front().instr.op1_r);
+                    for (const ROB_t &robEntry : reorderBuff)
                     {
-                        cout << "--> op1_r for an element in reorderBuff: " << robEntry.instr.op1_r << endl;
+                        if (robEntry.ready == true)
+                            cout << "AFTER pop_front() reorderBuff: " << robEntry.instr.op1_r << endl;
                     }
                 }
+                else
+                {
+                    printf("ROB is empty. depth %lu", reorderBuff.size());
+                }
 
-                freeList.push_back(reorderBuff.front().instr.op1_r); // Reclaim space on the free list
-
-                reorderBuff.pop_front();
-                printf("popped front\n");
-                printf("ROB FRONT: %d\n", reorderBuff.front().instr.op1_r);
                 committedInsts++;
 
                 for (const ROB_t &robEntry : reorderBuff)
@@ -250,7 +256,7 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
                 }
                 commitPull++;
             }
-            else if(!reorderBuff.empty())
+            else if (!reorderBuff.empty())
             {
                 printf("reg not ready ROB %d ready=%d\n", reorderBuff.front().instr.op1_r, reorderBuff.front().ready);
             }
@@ -278,6 +284,11 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
 #ifdef WRITEBACK_DEBUG
     printf("-- writeback --\n");
 #endif
+
+    for(int i = 0; i < wBQueue.size(); i++)
+    {
+        printf("%c dest %d", wBQueue[i]->iType, wBQueue[i]->op1_r);
+    }
     for (int i = 0; i < ISSUE_WIDTH; i++)
     {
         if (wBQueue.empty() == false)
@@ -308,7 +319,7 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
 #ifdef WRITEBACK_DEBUG
                         printf("Marked ROB[%d]: %c dest %d as complete.\n", j, reorderBuff.at(j).instr.iType, reorderBuff.at(j).instr.op1_r);
 #endif
-                        break;
+                        // break;
                     }
                 }
             }
@@ -316,6 +327,13 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
         else
         {
             pipe[i].C = NOP; // Othwerise commit gets a NOP
+        }
+    }
+    if (!commitQueue.empty())
+    {
+        for (int i = 0; i < commitQueue.size(); i++)
+        {
+            printf("%c %d\n", commitQueue[i]->iType, commitQueue[i]->op1_r);
         }
     }
 }
@@ -375,7 +393,8 @@ void issue(frontEndPipe_t *pipe, unsigned int cycle)
     printf("-- issue -- \n");
 #endif
 
-    unsigned int IQpull = 0; // Number of pulls from the IQ. IQpull < ISSUE_WIDTH.
+    unsigned int IQpull = 0;     // Number of total pulls from the IQ. IQpull < ISSUE_WIDTH.
+    deque<unsigned int> wakeupQ; //!< List of elements to search in the IQ for wakeup
 
     for (int i = 0; i < ISSUE_WIDTH; i++)
     {
@@ -386,7 +405,7 @@ void issue(frontEndPipe_t *pipe, unsigned int cycle)
             while (j < issueQueue.size() && IQpull < ISSUE_WIDTH)
             {
 #ifdef ISSUE_DEBUG
-                printf("IS check IQ[%d]:\n", j);
+                printf("check IQ[%d]:\n", j);
 #endif
                 if (issueQueue[j].src1_ready && issueQueue[j].src2_ready)
                 {
@@ -397,6 +416,10 @@ void issue(frontEndPipe_t *pipe, unsigned int cycle)
 #endif
                     issueQueue[j].instr->IS = cycle; // Mark cycle of completion
                     wBQueue.push_back(issueQueue[j].instr);
+
+                    // Add wakeup elements to the local deque of wakeup registers:
+                    wakeupQ.push_back(issueQueue[j].instr->op1_r);
+                    wakeupQ.push_back(issueQueue[j].instr->op2_r);
 
                     issueQueue.erase(issueQueue.begin() + j);
                     IQpull++;
@@ -414,6 +437,29 @@ void issue(frontEndPipe_t *pipe, unsigned int cycle)
         }
 #endif
     }
+
+    IQpull--; // Offset IQpull by 1 to be used in looking through the IQ again
+
+    // Wakeup dependent instructions by finding their entries in the IQ:
+    for (int i = 0; i < wakeupQ.size(); i++)
+    {
+        for (int j = 0; j < issueQueue.size(); j++) // Fixed the loop counter from 'i' to 'j'
+        {
+            if (issueQueue[j].instr->op2_r == wakeupQ[i])
+            {
+                printf("Woke up register src1 (p%d)\n", issueQueue[j].instr->op2_r);
+                issueQueue[j].src1_ready = true;
+            }
+            if (issueQueue[j].instr->op3_r == wakeupQ[i])
+            {
+                printf("Woke up register src2 (p%d)\n", issueQueue[j].instr->op3_r);
+                issueQueue[j].src2_ready = true;
+            }
+        }
+    }
+    wakeupQ.clear();
+
+    printf("IQpull=%lu\n", IQpull);
 }
 
 
@@ -795,6 +841,12 @@ int main()
         // {
         //     printf("%d  %d\n", i, readyTable[i]);
         // }
+
+        printf("EXTERN ROB STATE:\n");
+        for (int i = 0; i < reorderBuff.size(); i++)
+        {
+            printf("%c %d r%d\n", reorderBuff[i].instr.iType, reorderBuff[i].instr.op1_r, reorderBuff[i].ready);
+        }
         readyTable[0] = true; // Ensure p0 is always ready
         completedInsts = commit(thePipelineState, completedInsts, cycle);
         writeback(thePipelineState, cycle);
