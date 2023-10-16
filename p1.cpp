@@ -106,7 +106,7 @@ frontEndPipe_t *thePipelineState; //<! Pipeline information. Record of iRecord_t
 unsigned int *mapTable;       //!< System map table, depth of PREG_COUNT
 unsigned int *readyTable;     //!< System ready table, size of PREG_COUNT elements
 deque<unsigned int> freeList; //!< System free list of pReg's
-deque<ROB_t> reorderBuff;     //!< System re-order buffer (ROB)
+deque<ROB_t *> reorderBuff;     //!< System re-order buffer (ROB)
 deque<iqEntry_t> issueQueue;  //!< System issue queue. Linked with ROB
 unsigned long long iqAge = 0; //!< IQ age tracker
 
@@ -205,68 +205,59 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
 #endif
     for (int i = 0; i < ISSUE_WIDTH; i++)
     {
-        if (commitQueue.empty() == false)
+        // Look at head of ROB and see if it can be committed:
+        if (!reorderBuff.empty() && reorderBuff.front().ready == true && commitPull < ISSUE_WIDTH)
         {
-            // Look at head of ROB and see if it can be committed:
-            if (!reorderBuff.empty() && reorderBuff.front().ready == true && commitPull < ISSUE_WIDTH)
+            printf("ROB %d ready=%d\n", reorderBuff.front().instr.op1_r, reorderBuff.front().ready);
+            printf("COMMIT PULL %d\n", commitPull);
+            // Pull from front of commit queue
+            pipe[commitPull].C = commitQueue.front();
+            pipe[commitPull].C->C = cycle;
+#ifdef COMMIT_DEBUG
+            printf("Committed on %d cycle %d\n", commitQueue.front()->op1_r, pipe[commitPull].C->C);
+#endif
+            commitQueue.pop_front();
+
+#ifdef COMMIT_DEBUG
+            printf("poping %d from ROB\n", reorderBuff.front().instr.op1_r);
+            printf("commit queue depth: %lu\n", commitQueue.size());
+#endif
+
+            freeList.push_back(reorderBuff.front().instr.op1_r); // Reclaim register on the free list
+            // readyTable[reorderBuff.front().instr.op1_r] = false;
+
+            reorderBuff.pop_front(); // May clear it out, need to be careful here
+            if (!reorderBuff.empty())
             {
-                printf("ROB %d ready=%d\n", reorderBuff.front().instr.op1_r, reorderBuff.front().ready);
-                printf("COMMIT PULL %d\n", commitPull);
-                // Pull from front of commit queue
-                pipe[commitPull].C = commitQueue.front();
-                pipe[commitPull].C->C = cycle;
-#ifdef COMMIT_DEBUG
-                printf("Committed on %d cycle %d\n", commitQueue.front()->op1_r, pipe[commitPull].C->C);
-#endif
-                commitQueue.pop_front();
-
-#ifdef COMMIT_DEBUG
-                printf("poping %d from ROB\n", reorderBuff.front().instr.op1_r);
-                printf("commit queue depth: %lu\n", commitQueue.size());
-#endif
-
-                freeList.push_back(reorderBuff.front().instr.op1_r); // Reclaim register on the free list
-                //readyTable[reorderBuff.front().instr.op1_r] = false;
-
-                reorderBuff.pop_front(); // May clear it out, need to be careful here
-                if (!reorderBuff.empty())
-                {
-                    // reorderBuff.front().instr.op1_r = 111;
-                    printf("popped front. ROB depth %lu\n", reorderBuff.size());
-                    printf("new ROB FRONT: %d\n", reorderBuff.front().instr.op1_r);
-                    for (const ROB_t &robEntry : reorderBuff)
-                    {
-                        if (robEntry.ready == true)
-                            cout << "AFTER pop_front() reorderBuff: " << robEntry.instr.op1_r << endl;
-                    }
-                }
-                else
-                {
-                    printf("ROB is empty. depth %lu", reorderBuff.size());
-                }
-
-                committedInsts++;
-
+                // reorderBuff.front().instr.op1_r = 111;
+                printf("popped front. ROB depth %lu\n", reorderBuff.size());
+                printf("new ROB FRONT: %d\n", reorderBuff.front().instr.op1_r);
                 for (const ROB_t &robEntry : reorderBuff)
                 {
-                    if (robEntry.ready)
-                    {
-                        cout << "op1_r for an element in reorderBuff: " << robEntry.instr.op1_r << endl;
-                    }
+                    if (robEntry.ready == true)
+                        cout << "AFTER pop_front() reorderBuff: " << robEntry.instr.op1_r << endl;
                 }
-                commitPull++;
             }
-            else if (!reorderBuff.empty())
+            else
             {
-                printf("reg not ready ROB %d ready=%d\n", reorderBuff.front().instr.op1_r, reorderBuff.front().ready);
+                printf("ROB is empty. depth %lu", reorderBuff.size());
             }
+
+            committedInsts++;
+
+            for (const ROB_t &robEntry : reorderBuff)
+            {
+                if (robEntry.ready)
+                {
+                    cout << "op1_r for an element in reorderBuff: " << robEntry.instr.op1_r << endl;
+                }
+            }
+            commitPull++;
         }
-#ifdef COMMIT_DEBUG
-        else
+        else if (!reorderBuff.empty())
         {
-            printf("IW%d: no (more?) instr to commit\n", i);
+            printf("reg not ready ROB %d ready=%d\n", reorderBuff.front().instr.op1_r, reorderBuff.front().ready);
         }
-#endif
     }
 
     return committedInsts;
@@ -285,7 +276,7 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
     printf("-- writeback --\n");
 #endif
 
-    for(int i = 0; i < wBQueue.size(); i++)
+    for (int i = 0; i < wBQueue.size(); i++)
     {
         printf("%c dest %d", wBQueue[i]->iType, wBQueue[i]->op1_r);
     }
@@ -461,7 +452,6 @@ void issue(frontEndPipe_t *pipe, unsigned int cycle)
 
     printf("IQpull=%lu\n", IQpull);
 }
-
 
 /**
  * @brief Dispatches instructions into the issue queue
