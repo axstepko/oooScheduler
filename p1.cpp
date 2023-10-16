@@ -161,7 +161,7 @@ int initInstructions()
  */
 void printRecords(unsigned int numInstr)
 {
-    FILE *outputFile = fopen("output.txt", "w");
+    FILE *outputFile = fopen("out.txt", "w");
 
 #ifdef DEBUG_MODE
     printf("idx: F, Dc, R, Di, IS, WB, C\n");
@@ -214,8 +214,10 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
         // Look at head of ROB and see if it can be committed:
         if (!reorderBuff.empty() && reorderBuff.front()->ready == true && commitPull < ISSUE_WIDTH)
         {
+#ifdef COMMIT_DEBUG
             printf("ROB %d ready=%d\n", reorderBuff.front()->instr->op1_r, reorderBuff.front()->ready);
             printf("COMMIT PULL %d\n", commitPull);
+#endif
             // Pull from front of commit queue
             pipe[commitPull].C = reorderBuff.front()->instr;
             pipe[commitPull].C->C = cycle;
@@ -233,8 +235,10 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
             // readyTable[reorderBuff.front().instr.op1_r] = false;
 
             reorderBuff.pop_front(); // May clear it out, need to be careful here
+#ifdef COMMIT_DEBUG
             if (!reorderBuff.empty())
             {
+
                 // reorderBuff.front().instr.op1_r = 111;
                 printf("popped front. ROB depth %lu\n", reorderBuff.size());
                 printf("new ROB FRONT: %d\n", reorderBuff.front()->instr->op1_r);
@@ -248,9 +252,10 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
             {
                 printf("ROB is empty. depth %lu", reorderBuff.size());
             }
+#endif
 
             committedInsts++;
-
+#ifdef COMMIT_DEBUG
             for (const ROB_t *robEntry : reorderBuff)
             {
                 if (robEntry->ready)
@@ -258,12 +263,15 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
                     cout << "op1_r for an element in reorderBuff: " << robEntry->instr->op1_r << endl;
                 }
             }
+#endif
             commitPull++;
         }
+#ifdef COMMIT_DEBUG
         else if (!reorderBuff.empty())
         {
             printf("reg not ready ROB %d ready=%d\n", reorderBuff.front()->instr->op1_r, reorderBuff.front()->ready);
         }
+#endif
     }
 
     return committedInsts;
@@ -280,12 +288,12 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
     iRecord_t *tempRec;
 #ifdef WRITEBACK_DEBUG
     printf("-- writeback --\n");
-#endif
 
     for (int i = 0; i < wBQueue.size(); i++)
     {
         printf("%c dest %d", wBQueue[i]->iType, wBQueue[i]->op1_r);
     }
+#endif
     for (int i = 0; i < ISSUE_WIDTH; i++)
     {
         if (wBQueue.empty() == false)
@@ -326,6 +334,8 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
             pipe[i].C = NOP; // Othwerise commit gets a NOP
         }
     }
+#ifdef WRITEBACK_DEBUG
+
     if (!commitQueue.empty())
     {
         for (int i = 0; i < commitQueue.size(); i++)
@@ -333,6 +343,7 @@ void writeback(frontEndPipe_t *pipe, unsigned int cycle)
             printf("%c %d\n", commitQueue[i]->iType, commitQueue[i]->op1_r);
         }
     }
+#endif
 }
 
 /**
@@ -401,19 +412,25 @@ void issue(frontEndPipe_t *pipe, unsigned int cycle)
         {
             if (issueQueue[j].instr->op2_r == wakeupQ[i])
             {
+#ifdef ISSUE_DEBUG
                 printf("Woke up register src1 (p%d)\n", issueQueue[j].instr->op2_r);
+#endif
                 issueQueue[j].src1_ready = true;
             }
             if (issueQueue[j].instr->op3_r == wakeupQ[i])
             {
+#ifdef ISSUE_DEBUG
                 printf("Woke up register src2 (p%d)\n", issueQueue[j].instr->op3_r);
+#endif
                 issueQueue[j].src2_ready = true;
             }
         }
     }
     wakeupQ.clear();
 
+#ifdef ISSUE_DEBUG
     printf("IQpull=%u\n", IQpull);
+#endif
 }
 
 /**
@@ -708,20 +725,22 @@ int main()
     {
         mapTable[i] = i;
     }
-
+#ifdef DEBUG_MODE
     for (int i = 0; i < AREG_COUNT; i++)
     {
         printf("%d => %d\n", i, mapTable[i]);
     }
+#endif
 
     // Init ready table
     for (int i = 0; i < PREG_COUNT; i++)
     {
         readyTable[i] = true;
     }
+#ifdef DEBUG_MODE
     for (int i = 0; i < PREG_COUNT; i++)
         printf("%d => %d\n", i, readyTable[i]);
-
+#endif
     // Init free list
     for (int i = AREG_COUNT; i < PREG_COUNT; i++)
     {
@@ -769,25 +788,27 @@ int main()
         thePipelineState[i].F = instructions + fetchOffset;
         fetchOffset++;
     }
-
+#ifdef DEBUG_MODE
     printf("Will fetch %d", fetchOffset);
 
     for (int i = 0; i < ISSUE_WIDTH; i++)
     {
         printf("ISSUE_WIDTH=%d:\t%c, %d, %d, %d\n", i, thePipelineState[i].F->iType, thePipelineState[i].F->op1, thePipelineState[i].F->op2, thePipelineState[i].F->op3);
     }
+#endif
 
-    // Print instructions
-
+#ifdef DEBUG_MODE
+    // Print instructions:
     printf("INSTRUCTIONS TO BE PROCESSED:\n");
     for (int i = 0; i < ICOUNT; i++)
     {
         printf("%c %d %d %d\n", instructions[i].iType, instructions[i].op1, instructions[i].op2, instructions[i].op3);
     }
     printf("==========================================\n");
-
+#endif
     while (completedInsts < ICOUNT)
     {
+#ifdef DEBUG_MODE
         printf("\n\n========= CYCLE %d ==========\n", cycle);
         // printf("RT:\n");
         // for(int i = 0; i < PREG_COUNT; i++)
@@ -800,6 +821,8 @@ int main()
         {
             printf("%c %d r%d\n", reorderBuff[i]->instr->iType, reorderBuff[i]->instr->op1_r, reorderBuff[i]->ready);
         }
+#endif
+
         readyTable[0] = true; // Ensure p0 is always ready
         completedInsts = commit(thePipelineState, completedInsts, cycle);
         writeback(thePipelineState, cycle);
@@ -809,8 +832,9 @@ int main()
         stall = decode(thePipelineState, cycle, stall);
         fetch(thePipelineState, cycle, stall, ICOUNT, &fetchOffset);
 
+#ifdef DEBUG_MODE
         printf("Completed insts %d\n", completedInsts);
-
+#endif
         // completedInsts++;
 
         if (cycle == 15)
