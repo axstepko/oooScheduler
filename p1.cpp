@@ -211,12 +211,12 @@ unsigned int commit(frontEndPipe_t *pipe, unsigned int committedInsts, unsigned 
             printf("ROB %d ready=%d\n", reorderBuff.front()->instr->op1_r, reorderBuff.front()->ready);
             printf("COMMIT PULL %d\n", commitPull);
             // Pull from front of commit queue
-            pipe[commitPull].C = commitQueue.front();
+            pipe[commitPull].C = reorderBuff.front()->instr;
             pipe[commitPull].C->C = cycle;
-#ifdef COMMIT_DEBUG
-            printf("Committed on %d cycle %d\n", commitQueue.front()->op1_r, pipe[commitPull].C->C);
-#endif
-            commitQueue.pop_front();
+// #ifdef COMMIT_DEBUG
+//             printf("Committed on %d cycle %d\n", commitQueue.front()->op1_r, pipe[commitPull].C->C);
+// #endif
+//             commitQueue.pop_front();
 
 #ifdef COMMIT_DEBUG
             printf("poping %d from ROB\n", reorderBuff.front()->instr->op1_r);
